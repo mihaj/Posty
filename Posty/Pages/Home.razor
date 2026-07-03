@@ -1,4 +1,5 @@
 @page "/"
+@implements IDisposable
 @inject IJSRuntime JS
 
 <PageTitle>Posty — turn plain text into LinkedIn-ready formatting</PageTitle>
@@ -35,6 +36,8 @@
             <span class="chip">@GBold</span>
             <span class="chip">@GItalic</span>
             <span class="chip">@GBoldItalic</span>
+            <span class="chip">@GSerif</span>
+            <span class="chip">@GScript</span>
             <span class="chip">@GMono</span>
             <span class="chip">@GUnder</span>
             <span class="chip">@GDouble</span>
@@ -57,18 +60,22 @@
 
                     <span class="divider"></span>
 
-                    <button class="tool" title="Bold" aria-label="Bold"
+                    <button class="tool" title="Bold (Ctrl+B)" aria-label="Bold"
                             @onclick="() => ApplyStyle(TextStyle.Bold)">@GBold</button>
-                    <button class="tool" title="Italic" aria-label="Italic"
+                    <button class="tool" title="Italic (Ctrl+I)" aria-label="Italic"
                             @onclick="() => ApplyStyle(TextStyle.Italic)">@GItalic</button>
                     <button class="tool" title="Bold italic" aria-label="Bold italic"
                             @onclick="() => ApplyStyle(TextStyle.BoldItalic)">@GBoldItalic</button>
+                    <button class="tool" title="Serif bold" aria-label="Serif bold"
+                            @onclick="() => ApplyStyle(TextStyle.SerifBold)">@GSerif</button>
+                    <button class="tool" title="Script / cursive" aria-label="Script cursive"
+                            @onclick="() => ApplyStyle(TextStyle.Script)">@GScript</button>
                     <button class="tool" title="Monospace" aria-label="Monospace"
                             @onclick="() => ApplyStyle(TextStyle.Monospace)">@GMono</button>
 
                     <span class="divider"></span>
 
-                    <button class="tool" title="Underline" aria-label="Underline"
+                    <button class="tool" title="Underline (Ctrl+U)" aria-label="Underline"
                             @onclick="() => ApplyDecoration(Decoration.Underline)">@GUnder</button>
                     <button class="tool" title="Double underline" aria-label="Double underline"
                             @onclick="() => ApplyDecoration(Decoration.DoubleUnderline)">@GDouble</button>
@@ -82,11 +89,29 @@
                     <button class="tool" title="Numbered list" aria-label="Numbered list"
                             @onclick="() => ApplyList(true)">1.</button>
 
-                    <span class="spacer"></span>
+                    <span class="divider"></span>
 
-                    <button class="tool clear" title="Clear formatting" aria-label="Clear formatting"
-                            @onclick="ClearFormatting">Clear</button>
+                    <button class="tool clear @(_clearMenuOpen ? "on" : "")" title="Clear…" aria-label="Clear options"
+                            aria-haspopup="true" aria-expanded="@_clearMenuOpen"
+                            @onclick="ToggleClearMenu">Clear ▾</button>
                 </div>
+
+                <!-- Clear menu — the two-step pick is itself the confirmation for a whole-post wipe -->
+                @if (_clearMenuOpen)
+                {
+                    <div class="picker-backdrop" @onclick="CloseClearMenu"></div>
+                    <div class="clear-menu" @onclick:stopPropagation="true" role="menu">
+                        <button class="clear-item" role="menuitem" @onclick="RemoveFormatting">
+                            <span class="ci-title">Remove formatting</span>
+                            <span class="ci-sub">@(HasSelection ? "From the selected text" : "From the whole post — keeps your words")</span>
+                        </button>
+                        <button class="clear-item danger" role="menuitem" @onclick="DeleteAllText">
+                            <span class="ci-title">Delete all text</span>
+                            <span class="ci-sub">Empties the editor completely</span>
+                        </button>
+                        <button class="clear-item cancel" role="menuitem" @onclick="CloseClearMenu">Cancel</button>
+                    </div>
+                }
 
                 <!-- Emoji picker -->
                 @if (_pickerOpen)
@@ -139,8 +164,9 @@
             </div>
 
             <p class="tip">
-                Tip — these are real Unicode characters, not styling. Screen readers may
-                read them oddly, so keep names and key words in plain text for accessibility.
+                Shortcuts — <kbd>Ctrl</kbd>+<kbd>B</kbd> / <kbd>I</kbd> / <kbd>U</kbd> on the selection.
+                Note these are real Unicode characters, not styling, so screen readers may read them
+                oddly — keep names and key words in plain text for accessibility.
             </p>
         </section>
 
@@ -200,7 +226,7 @@
     </main>
 
     <footer class="foot">
-        <span>Built with Blazor WebAssembly · runs entirely in your browser · no ads, no trackers, nothing uploaded.</span>
+        <span>© 2026 <a href="https://mihajakovac.com" target="_blank" rel="noopener">Miha Jakovac</a> · built with Blazor WebAssembly · runs entirely in your browser · no ads, no trackers, nothing uploaded.</span>
     </footer>
 </div>
 
@@ -228,10 +254,20 @@
     private static readonly string GBold = PostStyler.SetLetterStyle("B", TextStyle.Bold);
     private static readonly string GItalic = PostStyler.SetLetterStyle("I", TextStyle.Italic);
     private static readonly string GBoldItalic = PostStyler.SetLetterStyle("BI", TextStyle.BoldItalic);
+    private static readonly string GSerif = PostStyler.SetLetterStyle("B", TextStyle.SerifBold);
+    private static readonly string GScript = PostStyler.SetLetterStyle("S", TextStyle.Script);
     private static readonly string GMono = PostStyler.SetLetterStyle("M", TextStyle.Monospace);
     private static readonly string GUnder = PostStyler.ToggleDecoration("U", Decoration.Underline, true);
     private static readonly string GDouble = PostStyler.ToggleDecoration("U", Decoration.DoubleUnderline, true);
     private static readonly string GStrike = PostStyler.ToggleDecoration("S", Decoration.Strikethrough, true);
+
+    // Clear menu + keyboard-shortcut plumbing
+    private bool _clearMenuOpen;
+    private bool _hasSelection;
+    private bool HasSelection => _hasSelection;
+    private DotNetObjectReference<Home>? _selfRef;
+
+    protected override void OnInitialized() => _selfRef = DotNetObjectReference.Create(this);
 
     private int RuneCount => _text.EnumerateRunes().Count();
 
@@ -268,8 +304,21 @@
         _pending = (ls, ls + styled.Length);
     }
 
-    private async Task ClearFormatting()
+    private async Task ToggleClearMenu()
     {
+        _clearMenuOpen = !_clearMenuOpen;
+        if (_clearMenuOpen)
+        {
+            var sel = await GetSelection(); // remember scope so the menu can describe it
+            _hasSelection = sel.Start != sel.End;
+        }
+    }
+
+    private void CloseClearMenu() => _clearMenuOpen = false;
+
+    private async Task RemoveFormatting()
+    {
+        _clearMenuOpen = false;
         var sel = await GetSelection();
         if (sel.Start == sel.End)
         {
@@ -281,6 +330,27 @@
             var (before, mid, after) = Slice(sel);
             Replace(before, PostStyler.ClearFormatting(mid), after, sel.Start);
         }
+    }
+
+    private void DeleteAllText()
+    {
+        _clearMenuOpen = false;
+        _text = "";
+        _previewExpanded = false;
+        _pending = (0, 0);
+    }
+
+    // Called from JS on Ctrl/Cmd + B / I / U (see posty.initEditor).
+    [JSInvokable]
+    public async Task OnShortcut(string key)
+    {
+        switch (key)
+        {
+            case "b": await ApplyStyle(TextStyle.Bold); break;
+            case "i": await ApplyStyle(TextStyle.Italic); break;
+            case "u": await ApplyDecoration(Decoration.Underline); break;
+        }
+        StateHasChanged();
     }
 
     private async Task InsertEmoji(string emoji)
@@ -409,7 +479,7 @@
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
-            await JS.InvokeVoidAsync("posty.initEditor", _editor);
+            await JS.InvokeVoidAsync("posty.initEditor", _editor, _selfRef);
 
         if (_pending is { } p)
         {
@@ -418,4 +488,6 @@
             await JS.InvokeVoidAsync("posty.autoGrow", _editor); // programmatic edits don't fire input
         }
     }
+
+    public void Dispose() => _selfRef?.Dispose();
 }

@@ -31,11 +31,22 @@ window.posty = {
     },
 
     // Wire the editor to auto-grow as the user types (native, no round-trip),
-    // and size it once for whatever is already there.
-    initEditor: function (el) {
+    // size it once for whatever is already there, and route Ctrl/Cmd+B/I/U to .NET.
+    initEditor: function (el, dotnetRef) {
         if (!el || el.dataset.grow === "1") return;
         el.dataset.grow = "1";
         el.addEventListener("input", function () { window.posty.autoGrow(el); });
+
+        el.addEventListener("keydown", function (e) {
+            if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+                var k = e.key.toLowerCase();
+                if (k === "b" || k === "i" || k === "u") {
+                    e.preventDefault(); // also stops Ctrl+U opening "view source"
+                    if (dotnetRef) dotnetRef.invokeMethodAsync("OnShortcut", k);
+                }
+            }
+        });
+
         window.posty.autoGrow(el);
     },
 

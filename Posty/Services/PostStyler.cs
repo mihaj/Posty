@@ -12,7 +12,9 @@ public enum TextStyle
     Bold,
     Italic,
     BoldItalic,
-    Monospace
+    Monospace,
+    SerifBold,
+    Script
 }
 
 /// <summary>
@@ -48,15 +50,27 @@ public static class PostStyler
     public const char StrikethroughMark = '̶';   // combining long stroke overlay
 
     // First code point of each contiguous styled range in the Mathematical
-    // Alphanumeric Symbols block. Digits only exist for some styles.
-    private readonly record struct Range(int Upper, int Lower, int? Digit);
+    // Alphanumeric Symbols block. Digits only exist for some styles, and a few
+    // glyphs are relocated to the Letterlike Symbols block (see Exceptions).
+    private readonly record struct Range(int Upper, int Lower, int? Digit, Dictionary<char, int>? Exceptions = null);
+
+    // Script's italic-cursive letters have "holes": these code points were already
+    // assigned in the Letterlike Symbols block, so the contiguous range skips them.
+    private static readonly Dictionary<char, int> ScriptExceptions = new()
+    {
+        ['B'] = 0x212C, ['E'] = 0x2130, ['F'] = 0x2131, ['H'] = 0x210B, ['I'] = 0x2110,
+        ['L'] = 0x2112, ['M'] = 0x2133, ['R'] = 0x211B,
+        ['e'] = 0x212F, ['g'] = 0x210A, ['o'] = 0x2134,
+    };
 
     private static readonly Dictionary<TextStyle, Range> Ranges = new()
     {
-        [TextStyle.Bold]       = new Range(0x1D5D4, 0x1D5EE, 0x1D7EC), // sans-serif bold
-        [TextStyle.Italic]     = new Range(0x1D608, 0x1D622, null),    // sans-serif italic
-        [TextStyle.BoldItalic] = new Range(0x1D63C, 0x1D656, null),    // sans-serif bold italic
-        [TextStyle.Monospace]  = new Range(0x1D670, 0x1D68A, 0x1D7F6), // monospace
+        [TextStyle.Bold]       = new Range(0x1D5D4, 0x1D5EE, 0x1D7EC),                  // sans-serif bold
+        [TextStyle.Italic]     = new Range(0x1D608, 0x1D622, null),                     // sans-serif italic
+        [TextStyle.BoldItalic] = new Range(0x1D63C, 0x1D656, null),                     // sans-serif bold italic
+        [TextStyle.Monospace]  = new Range(0x1D670, 0x1D68A, 0x1D7F6),                  // monospace
+        [TextStyle.SerifBold]  = new Range(0x1D400, 0x1D41A, 0x1D7CE),                  // serif bold
+        [TextStyle.Script]     = new Range(0x1D49C, 0x1D4B6, null, ScriptExceptions),   // script / cursive
     };
 
     // Reverse lookup: styled code point -> the ASCII character it stands for.
@@ -65,17 +79,14 @@ public static class PostStyler
 
     static PostStyler()
     {
-        foreach (var range in Ranges.Values)
+        // Build the reverse map through StyledCodePoint so per-letter exceptions
+        // (script's relocated glyphs) are registered at their real code points.
+        foreach (var (style, range) in Ranges)
         {
-            for (var i = 0; i < 26; i++)
-            {
-                StyledToAscii[range.Upper + i] = (char)('A' + i);
-                StyledToAscii[range.Lower + i] = (char)('a' + i);
-            }
-
-            if (range.Digit is { } digit)
-                for (var i = 0; i < 10; i++)
-                    StyledToAscii[digit + i] = (char)('0' + i);
+            for (var c = 'A'; c <= 'Z'; c++) StyledToAscii[StyledCodePoint(c, style)] = c;
+            for (var c = 'a'; c <= 'z'; c++) StyledToAscii[StyledCodePoint(c, style)] = c;
+            if (range.Digit is not null)
+                for (var c = '0'; c <= '9'; c++) StyledToAscii[StyledCodePoint(c, style)] = c;
         }
     }
 
@@ -213,6 +224,9 @@ public static class PostStyler
     {
         if (style == TextStyle.Normal || !Ranges.TryGetValue(style, out var range))
             return ascii;
+
+        if (range.Exceptions is not null && range.Exceptions.TryGetValue(ascii, out var relocated))
+            return relocated;
 
         if (ascii is >= 'A' and <= 'Z') return range.Upper + (ascii - 'A');
         if (ascii is >= 'a' and <= 'z') return range.Lower + (ascii - 'a');
