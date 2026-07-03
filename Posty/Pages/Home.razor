@@ -1,0 +1,421 @@
+@page "/"
+@inject IJSRuntime JS
+
+<PageTitle>Posty — turn plain text into LinkedIn-ready formatting</PageTitle>
+
+<div class="app">
+
+    <!-- ================= Masthead ================= -->
+    <header class="masthead">
+        <div class="brand">
+            <span class="brand-mark">✶</span>
+            <span class="brand-name">Posty</span>
+            <span class="brand-free">free · no login</span>
+        </div>
+
+        <h1 class="headline">
+            Write it plain.<br />
+            Paste it <mark class="hl">formatted</mark>.
+        </h1>
+        <p class="subhead">
+            LinkedIn strips bold, italics and bullets. Posty swaps your letters for
+            look-alike Unicode glyphs that survive the paste — so your post reads exactly
+            the way you wrote it.
+        </p>
+
+        <ul class="trust" aria-label="What Posty does not do">
+            <li>🔒 No ads</li>
+            <li>🚫 No trackers</li>
+            <li>🙅 No sign-up</li>
+            <li>💻 100% in your browser</li>
+        </ul>
+
+        <!-- Type-specimen legend: every transformation this tool makes, shown for real -->
+        <div class="specimen" aria-hidden="true">
+            <span class="chip">@GBold</span>
+            <span class="chip">@GItalic</span>
+            <span class="chip">@GBoldItalic</span>
+            <span class="chip">@GMono</span>
+            <span class="chip">@GUnder</span>
+            <span class="chip">@GDouble</span>
+            <span class="chip">@GStrike</span>
+            <span class="chip">• ‣</span>
+        </div>
+    </header>
+
+    <!-- ================= Workspace ================= -->
+    <main class="workspace">
+
+        <!-- --------- Editor --------- -->
+        <section class="editor-col">
+            <div class="card editor-card">
+
+                <div class="toolbar" role="toolbar" aria-label="Formatting">
+                    <button class="tool emoji-toggle @(_pickerOpen ? "on" : "")"
+                            title="Insert emoji" aria-label="Insert emoji"
+                            @onclick="TogglePicker">😊</button>
+
+                    <span class="divider"></span>
+
+                    <button class="tool" title="Bold" aria-label="Bold"
+                            @onclick="() => ApplyStyle(TextStyle.Bold)">@GBold</button>
+                    <button class="tool" title="Italic" aria-label="Italic"
+                            @onclick="() => ApplyStyle(TextStyle.Italic)">@GItalic</button>
+                    <button class="tool" title="Bold italic" aria-label="Bold italic"
+                            @onclick="() => ApplyStyle(TextStyle.BoldItalic)">@GBoldItalic</button>
+                    <button class="tool" title="Monospace" aria-label="Monospace"
+                            @onclick="() => ApplyStyle(TextStyle.Monospace)">@GMono</button>
+
+                    <span class="divider"></span>
+
+                    <button class="tool" title="Underline" aria-label="Underline"
+                            @onclick="() => ApplyDecoration(Decoration.Underline)">@GUnder</button>
+                    <button class="tool" title="Double underline" aria-label="Double underline"
+                            @onclick="() => ApplyDecoration(Decoration.DoubleUnderline)">@GDouble</button>
+                    <button class="tool" title="Strikethrough" aria-label="Strikethrough"
+                            @onclick="() => ApplyDecoration(Decoration.Strikethrough)">@GStrike</button>
+
+                    <span class="divider"></span>
+
+                    <button class="tool" title="Bulleted list" aria-label="Bulleted list"
+                            @onclick="() => ApplyList(false)">•</button>
+                    <button class="tool" title="Numbered list" aria-label="Numbered list"
+                            @onclick="() => ApplyList(true)">1.</button>
+
+                    <span class="spacer"></span>
+
+                    <button class="tool clear" title="Clear formatting" aria-label="Clear formatting"
+                            @onclick="ClearFormatting">Clear</button>
+                </div>
+
+                <!-- Emoji picker -->
+                @if (_pickerOpen)
+                {
+                    <div class="picker-backdrop" @onclick="ClosePicker"></div>
+                    <div class="emoji-pop" @onclick:stopPropagation="true">
+                        <input class="emoji-search" placeholder="Search emoji…"
+                               @bind="_search" @bind:event="oninput" aria-label="Search emoji" />
+
+                        @if (string.IsNullOrWhiteSpace(_search))
+                        {
+                            <div class="emoji-tabs">
+                                @for (var i = 0; i < EmojiData.Groups.Length; i++)
+                                {
+                                    var idx = i;
+                                    <button class="emoji-tab @(idx == _group ? "on" : "")"
+                                            title="@EmojiData.Groups[idx].Name"
+                                            @onclick="() => _group = idx">@EmojiData.Groups[idx].Icon</button>
+                                }
+                            </div>
+                        }
+
+                        <div class="emoji-grid">
+                            @foreach (var e in VisibleEmoji())
+                            {
+                                var glyph = e.Glyph;
+                                <button class="emoji-cell" title="@e.Keywords"
+                                        @onclick="() => InsertEmoji(glyph)">@glyph</button>
+                            }
+                            @if (!VisibleEmoji().Any())
+                            {
+                                <div class="emoji-empty">No emoji match “@_search”.</div>
+                            }
+                        </div>
+                    </div>
+                }
+
+                <textarea class="editor" @ref="_editor"
+                          @bind="_text" @bind:event="oninput"
+                          spellcheck="true"
+                          placeholder="Start typing your post…&#10;&#10;Select any text and hit a button above to make it 𝗯𝗼𝗹𝗱, 𝘪𝘵𝘢𝘭𝘪𝘤 or u̲n̲d̲e̲r̲l̲i̲n̲e̲d̲.&#10;Add • bullets and 😊 emoji, then copy it into LinkedIn."></textarea>
+
+                <div class="editor-foot">
+                    <span class="hint @(_hint is null ? "" : "show")">@_hint</span>
+                    <span class="counter">
+                        <span class="count-num @(RuneCount > PostLimit ? "over" : "")">@RuneCount.ToString("N0")</span>
+                        <span class="count-lim">/ @PostLimit.ToString("N0")</span>
+                    </span>
+                </div>
+            </div>
+
+            <p class="tip">
+                Tip — these are real Unicode characters, not styling. Screen readers may
+                read them oddly, so keep names and key words in plain text for accessibility.
+            </p>
+        </section>
+
+        <!-- --------- Live LinkedIn preview --------- -->
+        <aside class="preview-col">
+            <div class="preview-label">
+                <span class="dot"></span> Live LinkedIn preview
+            </div>
+
+            <div class="card feed-card">
+                <div class="feed-head">
+                    <div class="avatar">in</div>
+                    <div class="feed-id">
+                        <div class="feed-name">Your Name <span class="conn">· 1st</span></div>
+                        <div class="feed-role">Founder · Building in public</div>
+                        <div class="feed-meta">now · 🌐</div>
+                    </div>
+                    <div class="feed-more">···</div>
+                </div>
+
+                <div class="feed-body">
+                    @if (string.IsNullOrEmpty(_text))
+                    {
+                        <span class="feed-placeholder">Your formatted post appears here, exactly as it will look in the feed.</span>
+                    }
+                    else
+                    {
+                        var preview = ComputePreview();
+                        @preview.Shown
+                        @if (preview.Truncated && !_previewExpanded)
+                        {
+                            <span class="see-more" role="button" tabindex="0"
+                                  @onclick="() => _previewExpanded = true"
+                                  @onkeydown="ExpandOnEnter">…more</span>
+                        }
+                        else if (preview.Truncated && _previewExpanded)
+                        {
+                            <span class="see-more" role="button" tabindex="0"
+                                  @onclick="() => _previewExpanded = false"
+                                  @onkeydown="CollapseOnEnter"> less</span>
+                        }
+                    }
+                </div>
+
+                <div class="feed-stats">👍❤️🎯 128 · 24 comments</div>
+                <div class="feed-actions">
+                    <span>👍 Like</span><span>💬 Comment</span><span>🔁 Repost</span><span>📤 Send</span>
+                </div>
+            </div>
+
+            <button class="copy-btn @(_copied ? "done" : "")" @onclick="Copy" disabled="@string.IsNullOrEmpty(_text)">
+                <span class="copy-face copy-idle">Copy post</span>
+                <span class="copy-face copy-ok">Copied ✓</span>
+            </button>
+            <p class="copy-note">Paste straight into the LinkedIn post box — formatting stays put.</p>
+        </aside>
+    </main>
+
+    <footer class="foot">
+        <span>Built with Blazor WebAssembly · runs entirely in your browser · no ads, no trackers, nothing uploaded.</span>
+    </footer>
+</div>
+
+@code {
+    // -- Editor state -------------------------------------------------------
+    private ElementReference _editor;
+    private string _text = "";
+    private (int Start, int End)? _pending; // selection to restore after a programmatic edit
+
+    // -- Emoji picker -------------------------------------------------------
+    private bool _pickerOpen;
+    private int _group;
+    private string _search = "";
+
+    // -- Transient UI -------------------------------------------------------
+    private string? _hint;
+    private int _hintToken;
+    private bool _copied;
+    private bool _previewExpanded;
+
+    private const int PostLimit = 3000;   // LinkedIn post character limit
+    private const int PreviewCutoff = 210; // roughly where the feed shows "…more"
+
+    // Button glyphs are produced by the engine itself, so they always match its output.
+    private static readonly string GBold = PostStyler.SetLetterStyle("B", TextStyle.Bold);
+    private static readonly string GItalic = PostStyler.SetLetterStyle("I", TextStyle.Italic);
+    private static readonly string GBoldItalic = PostStyler.SetLetterStyle("BI", TextStyle.BoldItalic);
+    private static readonly string GMono = PostStyler.SetLetterStyle("M", TextStyle.Monospace);
+    private static readonly string GUnder = PostStyler.ToggleDecoration("U", Decoration.Underline, true);
+    private static readonly string GDouble = PostStyler.ToggleDecoration("U", Decoration.DoubleUnderline, true);
+    private static readonly string GStrike = PostStyler.ToggleDecoration("S", Decoration.Strikethrough, true);
+
+    private int RuneCount => _text.EnumerateRunes().Count();
+
+    // ---------------------------------------------------------------- actions
+
+    private async Task ApplyStyle(TextStyle style)
+    {
+        var sel = await GetSelection();
+        if (sel.Start == sel.End) { await Flash("Select some text first, then pick a style"); return; }
+
+        var (before, mid, after) = Slice(sel);
+        var target = PostStyler.HasLetterStyle(mid, style) ? TextStyle.Normal : style;
+        Replace(before, PostStyler.SetLetterStyle(mid, target), after, sel.Start);
+    }
+
+    private async Task ApplyDecoration(Decoration decoration)
+    {
+        var sel = await GetSelection();
+        if (sel.Start == sel.End) { await Flash("Select some text first, then add a line"); return; }
+
+        var (before, mid, after) = Slice(sel);
+        var add = !PostStyler.HasDecoration(mid, decoration);
+        Replace(before, PostStyler.ToggleDecoration(mid, decoration, add), after, sel.Start);
+    }
+
+    private async Task ApplyList(bool numbered)
+    {
+        var sel = await GetSelection();
+        var v = sel.Value;
+        var (ls, le) = LineSpan(v, sel.Start, sel.End);
+        var block = v[ls..le];
+        var styled = numbered ? PostStyler.ToggleNumbers(block) : PostStyler.ToggleBullets(block);
+        _text = v[..ls] + styled + v[le..];
+        _pending = (ls, ls + styled.Length);
+    }
+
+    private async Task ClearFormatting()
+    {
+        var sel = await GetSelection();
+        if (sel.Start == sel.End)
+        {
+            _text = PostStyler.ClearFormatting(_text);
+            _pending = (0, _text.Length);
+        }
+        else
+        {
+            var (before, mid, after) = Slice(sel);
+            Replace(before, PostStyler.ClearFormatting(mid), after, sel.Start);
+        }
+    }
+
+    private async Task InsertEmoji(string emoji)
+    {
+        var sel = await GetSelection();
+        var (before, _, after) = Slice(sel);
+        _text = before + emoji + after;
+        var pos = sel.Start + emoji.Length;
+        _pending = (pos, pos);
+        ClosePicker();
+    }
+
+    private async Task Copy()
+    {
+        if (string.IsNullOrEmpty(_text)) return;
+        var ok = await JS.InvokeAsync<bool>("posty.copy", _text);
+        if (!ok) { await Flash("Couldn't reach the clipboard — try selecting and copying manually"); return; }
+
+        _copied = true;
+        StateHasChanged();
+        await Task.Delay(2200);
+        _copied = false;
+        StateHasChanged();
+    }
+
+    // ---------------------------------------------------------------- picker
+
+    private void TogglePicker() { _pickerOpen = !_pickerOpen; _search = ""; }
+    private void ClosePicker() => _pickerOpen = false;
+
+    private IEnumerable<Emoji> VisibleEmoji()
+    {
+        if (string.IsNullOrWhiteSpace(_search))
+            return EmojiData.Groups[_group].Emoji;
+
+        var q = _search.Trim();
+        return EmojiData.Groups
+            .SelectMany(g => g.Emoji)
+            .Where(e => e.Keywords.Contains(q, StringComparison.OrdinalIgnoreCase))
+            .GroupBy(e => e.Glyph)
+            .Select(grp => grp.First());
+    }
+
+    // ---------------------------------------------------------------- preview
+
+    private (string Shown, bool Truncated) ComputePreview()
+    {
+        if (_previewExpanded || _text.Length == 0) return (_text, RuneCount > PreviewCutoff || LineCount(_text) > 3);
+
+        // Cut at whichever comes first: the 3rd line break or ~210 runes.
+        var byLine = ThirdNewlineIndex(_text);
+        var byRune = RuneIndex(_text, PreviewCutoff);
+        var cut = Math.Min(byLine, byRune);
+        return (_text[..cut], cut < _text.Length);
+    }
+
+    private void ExpandOnEnter(KeyboardEventArgs e) { if (e.Key is "Enter" or " ") _previewExpanded = true; }
+    private void CollapseOnEnter(KeyboardEventArgs e) { if (e.Key is "Enter" or " ") _previewExpanded = false; }
+
+    // ---------------------------------------------------------------- helpers
+
+    private sealed class SelInfo
+    {
+        public int Start { get; set; }
+        public int End { get; set; }
+        public string Value { get; set; } = "";
+    }
+
+    private async Task<SelInfo> GetSelection() =>
+        await JS.InvokeAsync<SelInfo>("posty.getSelection", _editor) ?? new SelInfo { Value = _text };
+
+    private static (string before, string mid, string after) Slice(SelInfo s)
+    {
+        var v = s.Value;
+        var start = Math.Clamp(s.Start, 0, v.Length);
+        var end = Math.Clamp(s.End, start, v.Length);
+        return (v[..start], v[start..end], v[end..]);
+    }
+
+    private void Replace(string before, string mid, string after, int start)
+    {
+        _text = before + mid + after;
+        _pending = (start, start + mid.Length);
+    }
+
+    private static (int start, int end) LineSpan(string v, int start, int end)
+    {
+        start = Math.Clamp(start, 0, v.Length);
+        end = Math.Clamp(end, start, v.Length);
+        var ls = start == 0 ? 0 : v.LastIndexOf('\n', start - 1) + 1;
+        var nl = end >= v.Length ? -1 : v.IndexOf('\n', end);
+        var le = nl < 0 ? v.Length : nl;
+        return (ls, le);
+    }
+
+    private static int ThirdNewlineIndex(string s)
+    {
+        var count = 0;
+        for (var i = 0; i < s.Length; i++)
+            if (s[i] == '\n' && ++count == 3) return i;
+        return s.Length;
+    }
+
+    private static int RuneIndex(string s, int runeN)
+    {
+        int i = 0, c = 0;
+        while (i < s.Length && c < runeN)
+        {
+            i += char.IsHighSurrogate(s[i]) && i + 1 < s.Length && char.IsLowSurrogate(s[i + 1]) ? 2 : 1;
+            c++;
+        }
+        return i;
+    }
+
+    private static int LineCount(string s) => s.Count(c => c == '\n') + 1;
+
+    private async Task Flash(string message)
+    {
+        _hint = message;
+        var token = ++_hintToken;
+        StateHasChanged();
+        await Task.Delay(2200);
+        if (token == _hintToken) { _hint = null; StateHasChanged(); }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await JS.InvokeVoidAsync("posty.initEditor", _editor);
+
+        if (_pending is { } p)
+        {
+            _pending = null;
+            await JS.InvokeVoidAsync("posty.setSelection", _editor, p.Start, p.End);
+            await JS.InvokeVoidAsync("posty.autoGrow", _editor); // programmatic edits don't fire input
+        }
+    }
+}

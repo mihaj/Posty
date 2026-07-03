@@ -1,0 +1,130 @@
+/* ============================================================================
+   Posty — design tokens + base
+   "Type specimen / glyph foundry": indigo ink, electric violet, amber highlighter.
+   ========================================================================== */
+:root {
+    --ink: #17143A;          /* deep indigo, near-black text */
+    --ink-soft: #4b4770;     /* secondary text */
+    --ink-faint: #8b88a8;    /* captions, meta */
+    --canvas: #f4f3fa;       /* lavender page background */
+    --surface: #ffffff;      /* cards */
+    --surface-2: #faf9ff;    /* subtle panels */
+    --line: #e7e5f2;         /* hairlines */
+    --violet: #5b3df5;       /* primary accent */
+    --violet-600: #4a2fd6;
+    --violet-100: #ece8ff;   /* accent wash */
+    --marker: #ffce47;       /* amber highlighter */
+    --marker-soft: #fff2cc;
+    --good: #16a34a;
+
+    --shadow-sm: 0 1px 2px rgba(23, 20, 58, .06), 0 2px 8px rgba(23, 20, 58, .05);
+    --shadow-md: 0 8px 30px rgba(23, 20, 58, .10);
+    --shadow-lg: 0 24px 60px rgba(23, 20, 58, .16);
+
+    --radius: 16px;
+    --radius-sm: 10px;
+
+    --font-display: "Space Grotesk", system-ui, sans-serif;
+    --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "Space Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-body);
+    color: var(--ink);
+    background: var(--canvas);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3 { font-family: var(--font-display); margin: 0; }
+
+a { color: var(--violet-600); }
+
+:focus-visible {
+    outline: 2px solid var(--violet);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+button { font-family: inherit; }
+
+/* --- Blazor framework chrome ------------------------------------------------ */
+#blazor-error-ui {
+    color-scheme: light only;
+    background: lightyellow;
+    bottom: 0;
+    box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.2);
+    box-sizing: border-box;
+    display: none;
+    left: 0;
+    padding: 0.6rem 1.25rem 0.7rem 1.25rem;
+    position: fixed;
+    width: 100%;
+    z-index: 1000;
+}
+
+    #blazor-error-ui .dismiss {
+        cursor: pointer;
+        position: absolute;
+        right: 0.75rem;
+        top: 0.5rem;
+    }
+
+.blazor-error-boundary {
+    background: #b32121;
+    padding: 1rem;
+    color: white;
+}
+
+    .blazor-error-boundary::after {
+        content: "An error has occurred.";
+    }
+
+.loading-progress {
+    position: absolute;
+    display: block;
+    width: 8rem;
+    height: 8rem;
+    inset: 20vh 0 auto 0;
+    margin: 0 auto;
+}
+
+    .loading-progress circle {
+        fill: none;
+        stroke: #e0ddf2;
+        stroke-width: 0.6rem;
+        transform-origin: 50% 50%;
+        transform: rotate(-90deg);
+    }
+
+        .loading-progress circle:last-child {
+            stroke: var(--violet);
+            stroke-dasharray: calc(3.141 * var(--blazor-load-percentage, 0%) * 0.8), 500%;
+            transition: stroke-dasharray 0.05s ease-in-out;
+        }
+
+.loading-progress-text {
+    position: absolute;
+    text-align: center;
+    font-weight: bold;
+    inset: calc(20vh + 3.25rem) 0 auto 0.2rem;
+    font-family: var(--font-mono);
+    color: var(--ink);
+}
+
+    .loading-progress-text:after {
+        content: var(--blazor-load-percentage-text, "Loading");
+    }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important;
+    }
+}
