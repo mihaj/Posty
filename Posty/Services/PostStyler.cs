@@ -39,6 +39,10 @@ public enum Decoration
 /// always lands on the right glyph. Decorations use zero-width combining marks that
 /// sit on top of the preceding character.
 ///
+/// Accented Latin letters (č, ć, ž, š, đ, é, ñ…) have no precomposed styled glyph, so we
+/// split them into an ASCII base plus combining accents, style just the base, and re-stack
+/// the accents on top — the same trick, driven by Unicode canonical decomposition.
+///
 /// Everything is grapheme-aware: a "grapheme" is a base code point plus any trailing
 /// combining marks, so bold+underline compose and each attribute toggles cleanly.
 /// </summary>
@@ -48,6 +52,21 @@ public static class PostStyler
     public const char UnderlineMark = '̲';       // combining low line
     public const char DoubleUnderlineMark = '̳'; // combining double low line
     public const char StrikethroughMark = '̶';   // combining long stroke overlay
+
+    // Stroke letters (đ, ł) have no Unicode decomposition, so we approximate the bar
+    // through the stem with a combining overlay and fold it back to the real letter on
+    // the way out. The overlay deliberately differs from StrikethroughMark (U+0336).
+    private const char StrokeOverlay = '̵'; // combining short stroke overlay
+    private static readonly Dictionary<int, char> StrokeToBase = new()
+    {
+        [0x0111] = 'd', [0x0110] = 'D', // đ Đ
+        [0x0142] = 'l', [0x0141] = 'L', // ł Ł
+    };
+    private static readonly Dictionary<char, char> StrokeFromBase = new()
+    {
+        ['d'] = 'đ', ['D'] = 'Đ',
+        ['l'] = 'ł', ['L'] = 'Ł',
+    };
 
     // First code point of each contiguous styled range in the Mathematical
     // Alphanumeric Symbols block. Digits only exist for some styles, and a few
@@ -108,7 +127,9 @@ public static class PostStyler
             sb.Append(StyleBase(g.BaseCodePoint, style));
             foreach (var mark in g.Marks) sb.Append(mark);
         }
-        return sb.ToString();
+        // Un-styling puts letters back to ASCII base + accents; fold those into real
+        // precomposed letters (c+caron -> č, d+stroke -> đ) so the plain text is clean.
+        return style == TextStyle.Normal ? Recompose(sb.ToString()) : sb.ToString();
     }
 
     /// <summary>True if <paramref name="text"/> contains at least one letter and every
@@ -118,8 +139,11 @@ public static class PostStyler
         var any = false;
         foreach (var g in Graphemes(text))
         {
-            if (AsciiLetterOf(g.BaseCodePoint) is not { } ascii) continue;
+            if (LetterIdentity(g.BaseCodePoint) is not { } ascii) continue;
             any = true;
+            // A styled accented letter is stored as a styled ASCII base + accents, so its
+            // base code point already equals StyledCodePoint(base). A plain precomposed
+            // č never does, so it correctly reads as "not yet styled".
             if (g.BaseCodePoint != StyledCodePoint(ascii, style)) return false;
         }
         return any;
@@ -162,13 +186,18 @@ public static class PostStyler
         return any;
     }
 
-    /// <summary>Strip all styling and decorations back to plain text.</summary>
+    /// <summary>Strip all styling and decorations back to plain text. Letter accents
+    /// (the caron on č, the stroke on đ) are preserved; only underline/strike marks go.</summary>
     public static string ClearFormatting(string text)
     {
         var sb = new StringBuilder(text.Length);
         foreach (var g in Graphemes(text))
-            sb.Append(StyleBase(g.BaseCodePoint, TextStyle.Normal)); // marks dropped
-        return sb.ToString();
+        {
+            sb.Append(StyleBase(g.BaseCodePoint, TextStyle.Normal));
+            foreach (var m in g.Marks)
+                if (!IsDecorationMark(m)) sb.Append(m); // keep accents, drop underline/strike
+        }
+        return Recompose(sb.ToString());
     }
 
     private const string Bullet = "• ";
@@ -213,11 +242,18 @@ public static class PostStyler
     {
         // Fold any already-styled letter back to ASCII first, so re-styling works.
         var ascii = AsciiOf(codePoint);
-        if (ascii is null) return CodePointToString(codePoint); // punctuation, emoji, etc.
+        if (ascii is not null)
+            return style == TextStyle.Normal
+                ? ascii.Value.ToString()
+                : CodePointToString(StyledCodePoint(ascii.Value, style));
 
-        return style == TextStyle.Normal
-            ? ascii.Value.ToString()
-            : CodePointToString(StyledCodePoint(ascii.Value, style));
+        // Accented Latin (č, ć, ž, š, đ, é…): no precomposed styled glyph exists, so split
+        // into an ASCII base + combining accents, style just the base, and re-stack the
+        // accents. For Normal we leave the letter precomposed (Recompose handles that).
+        if (style != TextStyle.Normal && TryDecompose(codePoint, out var baseAscii, out var accents))
+            return CodePointToString(StyledCodePoint(baseAscii, style)) + accents;
+
+        return CodePointToString(codePoint); // punctuation, emoji, non-decomposable letters
     }
 
     private static int StyledCodePoint(char ascii, TextStyle style)
@@ -248,6 +284,64 @@ public static class PostStyler
     {
         var ascii = AsciiOf(codePoint);
         return ascii is >= 'A' and <= 'Z' or >= 'a' and <= 'z' ? ascii : null;
+    }
+
+    /// <summary>The ASCII letter a code point ultimately stands for — plain ASCII, a styled
+    /// variant, or an accented letter (č -> c). Null for anything that isn't a letter.</summary>
+    private static char? LetterIdentity(int codePoint)
+    {
+        if (AsciiLetterOf(codePoint) is { } ascii) return ascii;
+        if (TryDecompose(codePoint, out var baseAscii, out _)) return baseAscii;
+        return null;
+    }
+
+    /// <summary>Split an accented Latin letter into an ASCII base + its combining accents,
+    /// e.g. č -> ('c', "◌̌"). Uses Unicode canonical decomposition, with an explicit map for
+    /// the stroke letters (đ, ł) that have no decomposition. False for everything else.</summary>
+    private static bool TryDecompose(int codePoint, out char baseAscii, out string accents)
+    {
+        if (StrokeToBase.TryGetValue(codePoint, out baseAscii))
+        {
+            accents = StrokeOverlay.ToString();
+            return true;
+        }
+
+        baseAscii = '\0';
+        accents = "";
+        if (codePoint is >= 0xD800 and <= 0xDFFF) return false; // lone surrogate: not a letter
+
+        var d = char.ConvertFromUtf32(codePoint).Normalize(NormalizationForm.FormD);
+        if (d.Length < 2 || d[0] is not (>= 'A' and <= 'Z' or >= 'a' and <= 'z')) return false;
+        for (var i = 1; i < d.Length; i++)
+            if (!IsCombining(d[i])) return false; // only handle simple base + accents
+
+        baseAscii = d[0];
+        accents = d[1..];
+        return true;
+    }
+
+    private static bool IsDecorationMark(char m) =>
+        m is UnderlineMark or DoubleUnderlineMark or StrikethroughMark;
+
+    /// <summary>Fold ASCII base + combining accents back into precomposed letters so plain
+    /// text stays canonical: c+caron -> č via NFC, and d+stroke -> đ via the explicit map.</summary>
+    private static string Recompose(string s)
+    {
+        if (s.IndexOf(StrokeOverlay) >= 0)
+        {
+            var sb = new StringBuilder(s.Length);
+            for (var i = 0; i < s.Length; i++)
+            {
+                if (i + 1 < s.Length && s[i + 1] == StrokeOverlay && StrokeFromBase.TryGetValue(s[i], out var whole))
+                {
+                    sb.Append(whole);
+                    i++; // consumed the overlay too
+                }
+                else sb.Append(s[i]);
+            }
+            s = sb.ToString();
+        }
+        return s.Normalize(NormalizationForm.FormC);
     }
 
     private readonly record struct Grapheme(int BaseCodePoint, List<char> Marks);
